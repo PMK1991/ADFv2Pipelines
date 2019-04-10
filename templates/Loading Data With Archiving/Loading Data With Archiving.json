@@ -1,0 +1,529 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"type": "string",
+			"metadata": "Data Factory Name"
+		},
+		"CreditData": {
+			"type": "string"
+		},
+		"SinkBlobStore": {
+			"type": "string"
+		},
+		"AzureVmSource": {
+			"type": "string"
+		},
+		"DestinationStagingTable": {
+			"type": "string"
+		}
+	},
+	"variables": {
+		"factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('factoryName'), '/Loading Data With Archiving')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"description": "Copy all files across multiple containers or buckets from one file-based storage store to another",
+				"activities": [
+					{
+						"name": "EnumerateContainersList",
+						"description": "Scan the file path on your source storage store and get the container list.",
+						"type": "GetMetadata",
+						"policy": {
+							"timeout": "7.00:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"typeProperties": {
+							"dataset": {
+								"referenceName": "AzureVmSource",
+								"type": "DatasetReference"
+							},
+							"fieldList": [
+								"childItems"
+							]
+						}
+					},
+					{
+						"name": "ETLLogic",
+						"description": "Get the container list from Metadata activity and then iterates each of them to Copy activity.",
+						"type": "ForEach",
+						"dependsOn": [
+							{
+								"activity": "EnumerateContainersList",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"typeProperties": {
+							"items": {
+								"value": "@activity('EnumerateContainersList').output.childItems",
+								"type": "Expression"
+							},
+							"isSequential": true,
+							"activities": [
+								{
+									"name": "SourceToSink",
+									"description": "Copy each container from source storage store to destination store.",
+									"type": "Copy",
+									"dependsOn": [
+										{
+											"activity": "Truncate Staging",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"timeout": "7.00:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"userProperties": [
+										{
+											"name": "Source",
+											"value": "/"
+										},
+										{
+											"name": "Destination",
+											"value": "[concat('[', 'dbo].[stg_creditdata]')]"
+										}
+									],
+									"typeProperties": {
+										"source": {
+											"type": "FileSystemSource",
+											"recursive": false
+										},
+										"sink": {
+											"type": "SqlSink",
+											"writeBatchSize": 10000
+										},
+										"enableStaging": false,
+										"parallelCopies": 4,
+										"dataIntegrationUnits": 4,
+										"translator": {
+											"type": "TabularTranslator",
+											"columnMappings": {
+												"Prop_0": "SeriousDlqin2yrs",
+												"Prop_1": "RevolvingUtilizationOfUnsecuredLines",
+												"Prop_2": "age",
+												"Prop_3": "NumberOfTime30-59DaysPastDueNotWorse",
+												"Prop_4": "DebtRatio",
+												"Prop_5": "MonthlyIncome",
+												"Prop_6": "NumberOfOpenCreditLinesAndLoans",
+												"Prop_7": "NumberOfTimes90DaysLate",
+												"Prop_8": "NumberRealEstateLoansOrLines",
+												"Prop_9": "NumberOfTime60-89DaysPastDueNotWorse",
+												"Prop_10": "NumberOfDependents"
+											}
+										}
+									},
+									"inputs": [
+										{
+											"referenceName": "VMFileSystem",
+											"type": "DatasetReference",
+											"parameters": {
+												"FileName": "@item().name"
+											}
+										}
+									],
+									"outputs": [
+										{
+											"referenceName": "CreditData",
+											"type": "DatasetReference"
+										}
+									]
+								},
+								{
+									"name": "SCDImplementation",
+									"type": "SqlServerStoredProcedure",
+									"dependsOn": [
+										{
+											"activity": "SourceToSink",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"timeout": "7.00:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"typeProperties": {
+										"storedProcedureName": "[concat('[', 'dbo].[usp_updateFileName]')]",
+										"storedProcedureParameters": {
+											"Filename": {
+												"value": {
+													"value": "@item().name",
+													"type": "Expression"
+												},
+												"type": "String"
+											}
+										}
+									},
+									"linkedServiceName": {
+										"referenceName": "[parameters('CreditData')]",
+										"type": "LinkedServiceReference"
+									}
+								},
+								{
+									"name": "Truncate Staging",
+									"type": "SqlServerStoredProcedure",
+									"policy": {
+										"timeout": "7.00:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"typeProperties": {
+										"storedProcedureName": "[concat('[', 'dbo].[usp_truncateStaging]')]"
+									},
+									"linkedServiceName": {
+										"referenceName": "[parameters('CreditData')]",
+										"type": "LinkedServiceReference"
+									}
+								},
+								{
+									"name": "To Archive Folder",
+									"type": "Copy",
+									"dependsOn": [
+										{
+											"activity": "SourceToSink",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"timeout": "7.00:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"typeProperties": {
+										"source": {
+											"type": "FileSystemSource",
+											"recursive": false
+										},
+										"sink": {
+											"type": "BlobSink"
+										},
+										"enableStaging": false
+									},
+									"inputs": [
+										{
+											"referenceName": "VMFileSystem",
+											"type": "DatasetReference",
+											"parameters": {
+												"FileName": "@item().name"
+											}
+										}
+									],
+									"outputs": [
+										{
+											"referenceName": "Sinkblob",
+											"type": "DatasetReference"
+										}
+									]
+								},
+								{
+									"name": "DeletingSourceFile",
+									"type": "Delete",
+									"dependsOn": [
+										{
+											"activity": "To Archive Folder",
+											"dependencyConditions": [
+												"Succeeded"
+											]
+										}
+									],
+									"policy": {
+										"timeout": "7.00:00:00",
+										"retry": 0,
+										"retryIntervalInSeconds": 30,
+										"secureOutput": false,
+										"secureInput": false
+									},
+									"typeProperties": {
+										"dataset": {
+											"referenceName": "VMFileSystem",
+											"type": "DatasetReference",
+											"parameters": {
+												"FileName": "@item().name"
+											}
+										},
+										"logStorageSettings": {
+											"linkedServiceName": {
+												"referenceName": "[parameters('SinkBlobStore')]",
+												"type": "LinkedServiceReference"
+											},
+											"path": "ssas"
+										},
+										"enableLogging": true
+									}
+								}
+							]
+						}
+					}
+				]
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/AzureVmSource')]",
+				"[concat(variables('factoryId'), '/datasets/VMFileSystem')]",
+				"[concat(variables('factoryId'), '/datasets/CreditData')]",
+				"[concat(variables('factoryId'), '/datasets/Sinkblob')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/AzureVmSource')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"description": "Connection to your source data store.",
+				"linkedServiceName": {
+					"referenceName": "[parameters('AzureVmSource')]",
+					"type": "LinkedServiceReference"
+				},
+				"type": "FileShare",
+				"typeProperties": {
+					"format": {
+						"type": "TextFormat",
+						"columnDelimiter": ",",
+						"rowDelimiter": "",
+						"nullValue": "\\N",
+						"treatEmptyAsNull": true,
+						"skipLineCount": 0,
+						"firstRowAsHeader": false
+					}
+				}
+			}
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/VMFileSystem')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('AzureVmSource')]",
+					"type": "LinkedServiceReference"
+				},
+				"parameters": {
+					"FileName": {
+						"type": "String",
+						"defaultValue": "@item().name"
+					}
+				},
+				"type": "FileShare",
+				"structure": [
+					{
+						"name": "Prop_0",
+						"type": "String"
+					},
+					{
+						"name": "Prop_1",
+						"type": "String"
+					},
+					{
+						"name": "Prop_2",
+						"type": "String"
+					},
+					{
+						"name": "Prop_3",
+						"type": "String"
+					},
+					{
+						"name": "Prop_4",
+						"type": "String"
+					},
+					{
+						"name": "Prop_5",
+						"type": "String"
+					},
+					{
+						"name": "Prop_6",
+						"type": "String"
+					},
+					{
+						"name": "Prop_7",
+						"type": "String"
+					},
+					{
+						"name": "Prop_8",
+						"type": "String"
+					},
+					{
+						"name": "Prop_9",
+						"type": "String"
+					},
+					{
+						"name": "Prop_10",
+						"type": "String"
+					}
+				],
+				"typeProperties": {
+					"format": {
+						"type": "TextFormat",
+						"columnDelimiter": ",",
+						"rowDelimiter": "",
+						"nullValue": "\\N",
+						"treatEmptyAsNull": true,
+						"skipLineCount": 0,
+						"firstRowAsHeader": true
+					},
+					"fileName": {
+						"value": "@dataset().FileName",
+						"type": "Expression"
+					},
+					"folderPath": "."
+				}
+			}
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/CreditData')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('DestinationStagingTable')]",
+					"type": "LinkedServiceReference"
+				},
+				"type": "AzureSqlTable",
+				"structure": [
+					{
+						"name": "SeriousDlqin2yrs",
+						"type": "String"
+					},
+					{
+						"name": "RevolvingUtilizationOfUnsecuredLines",
+						"type": "String"
+					},
+					{
+						"name": "age",
+						"type": "String"
+					},
+					{
+						"name": "NumberOfTime30-59DaysPastDueNotWorse",
+						"type": "String"
+					},
+					{
+						"name": "DebtRatio",
+						"type": "String"
+					},
+					{
+						"name": "MonthlyIncome",
+						"type": "String"
+					},
+					{
+						"name": "NumberOfOpenCreditLinesAndLoans",
+						"type": "String"
+					},
+					{
+						"name": "NumberOfTimes90DaysLate",
+						"type": "String"
+					},
+					{
+						"name": "NumberRealEstateLoansOrLines",
+						"type": "String"
+					},
+					{
+						"name": "NumberOfTime60-89DaysPastDueNotWorse",
+						"type": "String"
+					},
+					{
+						"name": "NumberOfDependents",
+						"type": "String"
+					}
+				],
+				"typeProperties": {
+					"tableName": "[concat('[', 'dbo].[stg_creditdata]')]"
+				}
+			}
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/Sinkblob')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('SinkBlobStore')]",
+					"type": "LinkedServiceReference"
+				},
+				"type": "AzureBlob",
+				"structure": [
+					{
+						"name": "Prop_0",
+						"type": "String"
+					},
+					{
+						"name": "Prop_1",
+						"type": "String"
+					},
+					{
+						"name": "Prop_2",
+						"type": "String"
+					},
+					{
+						"name": "Prop_3",
+						"type": "String"
+					},
+					{
+						"name": "Prop_4",
+						"type": "String"
+					},
+					{
+						"name": "Prop_5",
+						"type": "String"
+					},
+					{
+						"name": "Prop_6",
+						"type": "String"
+					},
+					{
+						"name": "Prop_7",
+						"type": "String"
+					},
+					{
+						"name": "Prop_8",
+						"type": "String"
+					},
+					{
+						"name": "Prop_9",
+						"type": "String"
+					},
+					{
+						"name": "Prop_10",
+						"type": "String"
+					}
+				],
+				"typeProperties": {
+					"format": {
+						"type": "TextFormat",
+						"columnDelimiter": ",",
+						"rowDelimiter": "",
+						"nullValue": "\\N",
+						"treatEmptyAsNull": true,
+						"skipLineCount": 0,
+						"firstRowAsHeader": false
+					},
+					"fileName": "",
+					"folderPath": "archive"
+				}
+			}
+		}
+	]
+}
