@@ -1,0 +1,232 @@
+{
+	"$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+	"contentVersion": "1.0.0.0",
+	"parameters": {
+		"factoryName": {
+			"type": "string",
+			"metadata": "Data Factory Name"
+		},
+		"DestinationStagingTable": {
+			"type": "string"
+		},
+		"SourceDataLake": {
+			"type": "string"
+		},
+		"CreditData": {
+			"type": "string"
+		}
+	},
+	"variables": {
+		"factoryId": "[concat('Microsoft.DataFactory/factories/', parameters('factoryName'))]"
+	},
+	"resources": [
+		{
+			"name": "[concat(parameters('factoryName'), '/DataLakeToSQLDB')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "Copy to Data Lake to SQL Database Staging",
+						"type": "Copy",
+						"policy": {
+							"timeout": "7.00:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [
+							{
+								"name": "Source",
+								"value": "adfpocdata/LogData/ADLogs.csv"
+							},
+							{
+								"name": "Destination",
+								"value": "[concat('[', 'dbo].[ADLog]')]"
+							}
+						],
+						"typeProperties": {
+							"source": {
+								"type": "AzureBlobFSSource",
+								"recursive": false
+							},
+							"sink": {
+								"type": "SqlSink",
+								"writeBatchSize": 10000
+							},
+							"enableStaging": false,
+							"enableSkipIncompatibleRow": false,
+							"translator": {
+								"type": "TabularTranslator",
+								"columnMappings": {
+									"Keywords": "Keywords",
+									"Date and Time": "DateandTime",
+									"Source": "Source",
+									"Event ID": "EventID",
+									"Task Category": "TaskCategory",
+									"User": "User",
+									"Computer": "Computer",
+									"Message": "Message"
+								}
+							}
+						},
+						"inputs": [
+							{
+								"referenceName": "SourceDataset_9wo",
+								"type": "DatasetReference"
+							}
+						],
+						"outputs": [
+							{
+								"referenceName": "DestinationDataset_9wo",
+								"type": "DatasetReference"
+							}
+						]
+					},
+					{
+						"name": "usp_transformLogs",
+						"type": "SqlServerStoredProcedure",
+						"dependsOn": [
+							{
+								"activity": "Copy to Data Lake to SQL Database Staging",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "7.00:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"typeProperties": {
+							"storedProcedureName": "usp_transformLogs"
+						},
+						"linkedServiceName": {
+							"referenceName": "[parameters('DestinationStagingTable')]",
+							"type": "LinkedServiceReference"
+						}
+					}
+				]
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/datasets/SourceDataset_9wo')]",
+				"[concat(variables('factoryId'), '/datasets/DestinationDataset_9wo')]"
+			]
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/SourceDataset_9wo')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('SourceDataLake')]",
+					"type": "LinkedServiceReference"
+				},
+				"type": "AzureBlobFSFile",
+				"structure": [
+					{
+						"name": "Keywords",
+						"type": "String"
+					},
+					{
+						"name": "Date and Time",
+						"type": "String"
+					},
+					{
+						"name": "Source",
+						"type": "String"
+					},
+					{
+						"name": "Event ID",
+						"type": "String"
+					},
+					{
+						"name": "Task Category",
+						"type": "String"
+					},
+					{
+						"name": "User",
+						"type": "String"
+					},
+					{
+						"name": "Computer",
+						"type": "String"
+					},
+					{
+						"name": "Message",
+						"type": "String"
+					}
+				],
+				"typeProperties": {
+					"format": {
+						"type": "TextFormat",
+						"columnDelimiter": ",",
+						"rowDelimiter": "",
+						"quoteChar": "\"",
+						"nullValue": "\\N",
+						"encodingName": null,
+						"treatEmptyAsNull": true,
+						"skipLineCount": 0,
+						"firstRowAsHeader": true
+					},
+					"fileName": "ADLogs.csv",
+					"folderPath": "adfpocdata/LogData"
+				}
+			}
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/DestinationDataset_9wo')]",
+			"type": "Microsoft.DataFactory/factories/datasets",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"linkedServiceName": {
+					"referenceName": "[parameters('CreditData')]",
+					"type": "LinkedServiceReference"
+				},
+				"type": "AzureSqlTable",
+				"structure": [
+					{
+						"name": "Keywords",
+						"type": "String"
+					},
+					{
+						"name": "DateandTime",
+						"type": "String"
+					},
+					{
+						"name": "Source",
+						"type": "String"
+					},
+					{
+						"name": "EventID",
+						"type": "Int32",
+						"precision": 10
+					},
+					{
+						"name": "TaskCategory",
+						"type": "String"
+					},
+					{
+						"name": "User",
+						"type": "String"
+					},
+					{
+						"name": "Computer",
+						"type": "String"
+					},
+					{
+						"name": "Message",
+						"type": "String"
+					}
+				],
+				"typeProperties": {
+					"tableName": "[concat('[', 'dbo].[creditdata_2]')]"
+				}
+			}
+		}
+	]
+}
